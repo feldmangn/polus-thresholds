@@ -61,6 +61,38 @@ def threshold_magic_widget(
 ) -> "napari.types.LabelsData":
     return img_as_float(img_layer.data) > threshold
 
+import numpy as np
+import cv2
+from skimage import io
+import matplotlib.pyplot as plt
+from napari.types import LabelsData, ImageData
+@magic_factory(call_button="Run", filter_selected={"choices":["shanbhag"]})
+def shanbhag_threshold(selected_image: ImageData, filter_selected='shanbhag') -> LabelsData:
+    # Compute the histogram
+    hist, bin_edges = np.histogram(selected_image.flatten(), bins=256, range=(0, 256))
+    
+    # Normalize the histogram
+    hist = hist.astype(np.float32)
+    hist /= hist.sum()
+    
+    c_hist = np.cumsum(hist)
+    c_hist_sq = c_hist ** 2
+    bc1 = np.cumsum(hist * (np.arange(1, 257)))
+    bc1_sq = bc1 ** 2
+    
+    s1 = np.zeros_like(hist)
+    for i in range(256):
+        s1[i] = np.sum(hist[:i + 1] * np.log1p(hist[:i + 1])) if np.sum(hist[:i + 1]) > 0 else 0
+    s2 = np.zeros_like(hist)
+    for i in range(256):
+        s2[i] = np.sum(hist[i + 1:] * np.log1p(hist[i + 1:])) if np.sum(hist[i + 1:]) > 0 else 0
+
+    s = s1 + s2
+    k = np.arange(256)
+    shanbhag_criterion = -2 * k * s + bc1 - c_hist_sq
+
+    threshold = np.argmin(shanbhag_criterion)
+    return mask
 
 # if we want even more control over our widget, we can use
 # magicgui `Container`

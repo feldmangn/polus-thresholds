@@ -17,7 +17,12 @@ contributions:
       title: Make threshold function widget
     - id: polus-thresholds.make_qwidget
       python_name: polusthresholds:ExampleQWidget
-      title: Make example QWidget
+      title: Make example 
+    - id: polus-thresholds.my_widget
+      python_name: polus-thresholds._widget:shanbhag_threshold
+      title: Thresholds
+
+
   widgets:
     - command: polus-thresholds.make_container_widget
       display_name: Container Threshold
@@ -28,3 +33,5 @@ contributions:
       display_name: Autogenerate Threshold
     - command: polus-thresholds.make_qwidget
       display_name: Example QWidget
+    - command: polus-thresholds.my_widget
+      display_name: Thresholds
