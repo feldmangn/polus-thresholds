@@ -92,7 +92,7 @@ def shanbhag_threshold(selected_image: ImageData, filter_selected='shanbhag') ->
     shanbhag_criterion = -2 * k * s + bc1 - c_hist_sq
 
     threshold = np.argmin(shanbhag_criterion)
-    return mask
+    return threshold
 
 # if we want even more control over our widget, we can use
 # magicgui `Container`
