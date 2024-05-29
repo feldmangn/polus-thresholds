@@ -42,17 +42,79 @@ if TYPE_CHECKING:
 # Uses the `autogenerate: true` flag in the plugin manifest
 # to indicate it should be wrapped as a magicgui to autogenerate
 # a widget.
+
+
 def threshold_autogenerate_widget(
     img: "napari.types.ImageData",
     threshold: "float", 
 ) -> "napari.types.LabelsData":
     return img_as_float(img) > threshold
 
-
+import numpy as np
+import cv2
+import math
+from skimage import filters
+from magicgui import magic_factory
+from napari.types import ImageData, LabelsData
 # the magic_factory decorator lets us customize aspects of our widget
 # we specify a widget type for the threshold parameter
 # and use auto_call=True so the function is called whenever
 # the value of a parameter changes
+class HuangThresholding:
+    def __init__(self, data):
+        self.data = data
+        self.first_bin, self.last_bin = self.find_bin_limits()
+        self.term = 1.0 / max(1, self.last_bin - self.first_bin)
+        self.mu_0, self.mu_1 = self.calculate_mu()
+
+    def find_bin_limits(self):
+        non_zero_indices = np.nonzero(self.data)[0]
+        first_bin = non_zero_indices[0]
+        last_bin = non_zero_indices[-1]
+        return first_bin, last_bin
+
+    def calculate_mu(self):
+        indices = np.arange(len(self.data))
+        num_pix_cumsum = np.cumsum(self.data)
+        sum_pix_cumsum = np.cumsum(indices * self.data)
+        mu_0 = sum_pix_cumsum / np.where(num_pix_cumsum == 0, 1, num_pix_cumsum)
+        
+        num_pix_cumsum_rev = np.cumsum(self.data[::-1])[::-1]
+        sum_pix_cumsum_rev = np.cumsum((indices[::-1]) * self.data[::-1])[::-1]
+        mu_1 = sum_pix_cumsum_rev / np.where(num_pix_cumsum_rev == 0, 1, num_pix_cumsum_rev)
+
+        return mu_0, mu_1
+
+    def calculate_entropy(self, it):
+        ent = 0.0
+        for ih in range(it):
+            mu_x = 1.0 / (1.0 + self.term * abs(ih - self.mu_0[it]))
+            if not (mu_x < 1e-6 or mu_x > 1 - 1e-6):
+                ent -= self.data[ih] * (
+                    mu_x * math.log(mu_x) + (1.0 - mu_x) * math.log(1.0 - mu_x)
+                )
+
+        for ih in range(it + 1, len(self.data)):
+            mu_x = 1.0 / (1.0 + self.term * abs(ih - self.mu_1[it]))
+            if not (mu_x < 1e-6 or mu_x > 1 - 1e-6):
+                ent -= self.data[ih] * (
+                    mu_x * math.log(mu_x) + (1.0 - mu_x) * math.log(1.0 - mu_x)
+                )
+
+        return ent
+
+    def find_threshold(self):
+        threshold = -1
+        min_ent = float("inf")
+        for it in range(self.first_bin, self.last_bin + 1):
+            ent = self.calculate_entropy(it)
+            if ent < min_ent:
+                min_ent = ent
+                threshold = it
+
+        return threshold
+
+
 @magic_factory(
     threshold={"widget_type": "FloatSlider", "max": 1}, auto_call=True
 )
@@ -61,38 +123,115 @@ def threshold_magic_widget(
 ) -> "napari.types.LabelsData":
     return img_as_float(img_layer.data) > threshold
 
-import numpy as np
 import cv2
 from skimage import io
 import matplotlib.pyplot as plt
+import numpy as np
 from napari.types import LabelsData, ImageData
-@magic_factory(call_button="Run", filter_selected={"choices":["shanbhag"]})
-def shanbhag_threshold(selected_image: ImageData, filter_selected='shanbhag') -> LabelsData:
-    # Compute the histogram
-    hist, bin_edges = np.histogram(selected_image.flatten(), bins=256, range=(0, 256))
-    
-    # Normalize the histogram
-    hist = hist.astype(np.float32)
-    hist /= hist.sum()
-    
-    c_hist = np.cumsum(hist)
-    c_hist_sq = c_hist ** 2
-    bc1 = np.cumsum(hist * (np.arange(1, 257)))
-    bc1_sq = bc1 ** 2
-    
-    s1 = np.zeros_like(hist)
-    for i in range(256):
-        s1[i] = np.sum(hist[:i + 1] * np.log1p(hist[:i + 1])) if np.sum(hist[:i + 1]) > 0 else 0
-    s2 = np.zeros_like(hist)
-    for i in range(256):
-        s2[i] = np.sum(hist[i + 1:] * np.log1p(hist[i + 1:])) if np.sum(hist[i + 1:]) > 0 else 0
+from magicgui import magic_factory
+from skimage import filters
 
-    s = s1 + s2
-    k = np.arange(256)
-    shanbhag_criterion = -2 * k * s + bc1 - c_hist_sq
+import skimage
+import cv2
+import numpy as np
+from skimage import filters
+from magicgui import magic_factory
+from napari.types import ImageData, LabelsData
+from skimage.io import imread
+from skimage.color import rgb2gray
+from skimage.filters import threshold_otsu, threshold_li, threshold_yen, threshold_triangle
 
-    threshold = np.argmin(shanbhag_criterion)
-    return threshold
+
+
+# Import necessary libraries
+import cv2
+import numpy as np
+from napari.types import ImageData, LabelsData
+from magicgui import magic_factory
+from skimage import filters
+
+# Define the function with the decorator
+@magic_factory(call_button="Run", filter_selected={"choices": ["shanbhag", "li", "otsu", "huang","yen","triangle"]})
+def apply_threshold(selected_image: ImageData, filter_selected='shanbhag') -> LabelsData:
+    if filter_selected == "shanbhag":
+        # Convert the image to grayscale if it's not already
+        if len(selected_image.shape) == 3:
+            selected_image = cv2.cvtColor(selected_image, cv2.COLOR_BGR2GRAY)
+
+        # Compute the histogram
+        hist, bin_edges = np.histogram(selected_image.flatten(), bins=256, range=(0, 256))
+
+        # Normalize the histogram
+        hist = hist.astype(np.float32)
+        hist /= hist.sum()
+
+        c_hist = np.cumsum(hist)
+        c_hist_sq = c_hist ** 2
+        bc1 = np.cumsum(hist * (np.arange(1, 257)))
+        bc1_sq = bc1 ** 2
+
+        s1 = np.zeros_like(hist)
+        for i in range(256):
+            s1[i] = np.sum(hist[:i + 1] * np.log1p(hist[:i + 1])) if np.sum(hist[:i + 1]) > 0 else 0
+        s2 = np.zeros_like(hist)
+        for i in range(256):
+            s2[i] = np.sum(hist[i + 1:] * np.log1p(hist[i + 1:])) if np.sum(hist[i + 1:]) > 0 else 0
+
+        s = s1 + s2
+        k = np.arange(256)
+        shanbhag_criterion = -2 * k * s + bc1 - c_hist_sq
+
+        threshold = np.argmin(shanbhag_criterion)
+
+        # Apply the threshold to the image to create a binary image
+        _, binary_image = cv2.threshold(selected_image, threshold, 255, cv2.THRESH_BINARY)
+
+        # Convert binary image to label data (0 and 1 labels)
+        label_data = binary_image.astype(np.uint8)
+
+        return label_data
+    elif filter_selected == "li":
+        ths = filters.threshold_li(selected_image)
+        mask = (selected_image > ths)
+        return mask.astype(np.uint8)
+    elif filter_selected == "otsu":
+        # Otsu's thresholding
+        if len(selected_image.shape) == 3:
+            selected_image = cv2.cvtColor(selected_image, cv2.COLOR_BGR2GRAY)
+
+        threshold = filters.threshold_otsu(selected_image)
+        mask = (selected_image > threshold)
+        return mask.astype(np.uint8)
+    
+    elif filter_selected == "huang":
+        if len(selected_image.shape) == 3:
+            selected_image = cv2.cvtColor(selected_image, cv2.COLOR_BGR2GRAY)
+
+        hist, _ = np.histogram(selected_image.flatten(), bins=256, range=(0, 256))
+
+        huang_thresholder = HuangThresholding(hist)
+        threshold = huang_thresholder.find_threshold()
+
+        _, binary_image = cv2.threshold(selected_image, threshold, 255, cv2.THRESH_BINARY)
+
+        label_data = binary_image.astype(np.uint8)
+        return label_data
+    elif filter_selected == "yen":
+        ths = filters.threshold_yen(selected_image)
+        mask = (selected_image > ths)
+        return mask.astype(np.uint8)
+    elif filter_selected == "triangle":
+        ths = filters.threshold_triangle(selected_image)
+        mask = (selected_image > ths)
+        return mask.astype(np.uint8)
+
+
+# Ensure that the function is imported properly if you are running it in a separate script or module.
+
+
+
+
+
 
 # if we want even more control over our widget, we can use
 # magicgui `Container`
